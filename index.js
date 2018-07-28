@@ -1,4 +1,7 @@
-const request = require("request-promise");
+const request = require("requestretry").defaults({
+  //  fullResponse: false,
+});
+// const request = require("request-promise");
 const cheerio = require("cheerio");
 const ObjectsToCsv = require("objects-to-csv");
 
@@ -21,7 +24,7 @@ const scrapeResults = [];
 async function scrapeJobHeader() {
   try {
     const htmlResult = await request.get(url);
-    const $ = await cheerio.load(htmlResult);
+    const $ = await cheerio.load(htmlResult.body);
 
     $(".result-info").each((index, element) => {
       const resultTitle = $(element).children(".result-title");
@@ -45,10 +48,12 @@ async function scrapeJobHeader() {
 
 async function scrapeDescription(jobsWithHeaders) {
   return await Promise.all(
-    jobsWithHeaders.map(async job => {
+    jobsWithHeaders.map(async (job, index) => {
       try {
         const htmlResult = await request.get(job.url);
-        const $ = await cheerio.load(htmlResult);
+        const $ = await cheerio.load(htmlResult.body);
+        console.log(htmlResult.attempts);
+        console.log("job " + index);
         $(".print-qrcode-container").remove();
         job.description = $("#postingbody").text();
         job.address = $("div.mapaddress").text();
@@ -61,8 +66,33 @@ async function scrapeDescription(jobsWithHeaders) {
       } catch (error) {
         console.error(error);
       }
-    })
+    }),
+    { concurrency: 10 }
   );
+}
+
+async function scrapeDescriptionNotConcurrent(jobsWithHeaders) {
+  console.log(jobsWithHeaders);
+  for (var i = 0; i < jobsWithHeaders.length; i++) {
+    try {
+      let job = jobsWithHeaders[i];
+      const htmlResult = await request.get(job.url);
+      console.log("job " + i);
+
+      const $ = await cheerio.load(htmlResult.body);
+      $(".print-qrcode-container").remove();
+      job.description = $("#postingbody").text();
+      job.address = $("div.mapaddress").text();
+      const compensationText = $(".attrgroup")
+        .children()
+        .first()
+        .text();
+      job.compensation = compensationText.replace("compensation: ", "");
+    } catch (error) {
+      console.error(error);
+    }
+  }
+  return jobsWithHeaders;
 }
 
 async function createCsvFile(data) {
@@ -73,9 +103,14 @@ async function createCsvFile(data) {
 }
 
 async function scrapeCraigslist() {
-  const jobsWithHeaders = await scrapeJobHeader();
-  const jobsFullData = await scrapeDescription(jobsWithHeaders);
-  await createCsvFile(jobsFullData);
+  try {
+    const jobsWithHeaders = await scrapeJobHeader();
+    const jobsFullData = await scrapeDescription(jobsWithHeaders);
+    console.log(jobsFullData.length);
+    await createCsvFile(jobsFullData);
+  } catch (error) {
+    console.error(error);
+  }
 }
 
 scrapeCraigslist();
